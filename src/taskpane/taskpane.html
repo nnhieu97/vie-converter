@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VIE Charset Converter</title>
+    <link rel="stylesheet" href="/taskpane.css" />
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <h1>VIE Charset Converter</h1>
+        <p>Chuyển mã TCVN3/VNI sang Unicode theo chế độ an toàn.</p>
+      </header>
+
+      <section class="panel">
+        <label for="source-mode">Nguồn bảng mã</label>
+        <select id="source-mode">
+          <option value="auto">Tự nhận diện</option>
+          <option value="tcvn3">TCVN3 (ABC)</option>
+          <option value="vni">VNI-Windows</option>
+        </select>
+
+        <label for="scope-mode">Phạm vi</label>
+        <select id="scope-mode">
+          <option value="selection">Vùng đang chọn (khuyến nghị)</option>
+          <option value="main-body" disabled>Toàn văn bản chính (mở ở phase sau)</option>
+        </select>
+
+        <div class="button-row">
+          <button id="preview-btn" type="button">Preview</button>
+          <button id="apply-btn" type="button" disabled>Apply</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Trạng thái</h2>
+        <p id="status" class="status">Đang chờ Word sẵn sàng...</p>
+      </section>
+
+      <section class="panel preview-panel">
+        <h2>Preview</h2>
+        <p id="meta" class="meta">Chưa có dữ liệu preview.</p>
+        <div class="preview-grid">
+          <div>
+            <h3>Trước</h3>
+            <pre id="before-text"></pre>
+          </div>
+          <div>
+            <h3>Sau</h3>
+            <pre id="after-text"></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel warning">
+        <strong>Lưu ý:</strong>
+        Add-in hiện thay trực tiếp text của vùng chọn. Với đoạn có format phức tạp, nên thử từng đoạn nhỏ trước.
+      </section>
+    </main>
+    <script src="/taskpane.js"></script>
+  </body>
+</html>

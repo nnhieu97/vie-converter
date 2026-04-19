@@ -1,0 +1,23 @@
+{
+  "name": "word-vie-addin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal Word Add-in for converting legacy Vietnamese encodings to Unicode.",
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "node scripts/build.js",
+    "start": "node scripts/start-desktop.js",
+    "start:desktop": "node scripts/start-desktop.js",
+    "start:server": "node scripts/dev-server.js",
+    "stop:desktop": "office-addin-debugging stop manifest.xml desktop",
+    "validate": "office-addin-manifest validate manifest.xml",
+    "trust-cert": "office-addin-dev-certs install"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "esbuild": "^0.25.9",
+    "office-addin-debugging": "^6.0.7",
+    "office-addin-dev-certs": "^2.0.7",
+    "office-addin-manifest": "^2.1.3"
+  }
+}

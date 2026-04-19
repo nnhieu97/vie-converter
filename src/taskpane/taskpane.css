@@ -1,0 +1,145 @@
+:root {
+  --bg: #f4f7fb;
+  --surface: #ffffff;
+  --ink: #14213d;
+  --muted: #4f5d75;
+  --accent: #1260ee;
+  --ok: #0b7a3e;
+  --warn: #8a4b00;
+  --error: #b81e2d;
+  --border: #d9e1ee;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  background: radial-gradient(circle at top left, #e9f1ff 0%, var(--bg) 45%, #eef3ff 100%);
+  color: var(--ink);
+}
+
+.app {
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+label {
+  display: block;
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+select,
+button {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #bfd0ea;
+  font-size: 0.95rem;
+}
+
+select {
+  margin-bottom: 10px;
+  background: #fff;
+}
+
+.button-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+button {
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(135deg, #1b6fff, var(--accent));
+}
+
+button[disabled] {
+  cursor: not-allowed;
+  background: #a7b9d3;
+}
+
+h2,
+h3 {
+  margin: 0 0 8px;
+}
+
+.status {
+  margin: 0;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.status.ok {
+  color: var(--ok);
+}
+
+.status.warn {
+  color: var(--warn);
+}
+
+.status.error {
+  color: var(--error);
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, "Courier New", monospace;
+  background: #f8fbff;
+  border: 1px solid #dde8f9;
+  border-radius: 8px;
+  padding: 10px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.meta {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.warning {
+  font-size: 0.9rem;
+  color: #5a3000;
+  border-color: #f4c69d;
+  background: #fff7ef;
+}
+
+@media (min-width: 720px) {
+  .preview-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
