@@ -9,8 +9,9 @@
     "start": "node scripts/start-desktop.js",
     "start:desktop": "node scripts/start-desktop.js",
     "start:server": "node scripts/dev-server.js",
-    "stop:desktop": "office-addin-debugging stop manifest.xml desktop",
-    "validate": "office-addin-manifest validate manifest.xml",
+    "stop:desktop": "office-addin-debugging stop manifest.local.xml desktop",
+    "validate": "office-addin-manifest validate manifest.local.xml",
+    "validate:prod": "office-addin-manifest validate manifest.xml",
     "trust-cert": "office-addin-dev-certs install"
   },
   "dependencies": {},

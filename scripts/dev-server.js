@@ -112,7 +112,7 @@ async function start() {
 
   server.listen(port, 'localhost', () => {
     console.log(`[server] HTTPS serving at https://localhost:${port}`);
-    console.log('[server] Sideload manifest.xml and open task pane in Word.');
+    console.log('[server] Sideload manifest.local.xml and open task pane in Word.');
   });
 }
 

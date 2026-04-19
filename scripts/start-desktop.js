@@ -1,9 +1,10 @@
 const { spawn } = require('child_process');
+const fs = require('fs');
 const net = require('net');
 const path = require('path');
 
 const rootDir = path.resolve(__dirname, '..');
-const manifestPath = path.join(rootDir, 'manifest.xml');
+const manifestPath = path.join(rootDir, 'manifest.local.xml');
 const serverScriptPath = path.join(rootDir, 'scripts', 'dev-server.js');
 const port = Number(process.env.PORT || 3000);
 
@@ -58,7 +59,7 @@ function startSideload() {
   sideloadStarted = true;
 
   const { cmd, args, useShell } = sideloadCommand();
-  console.log('[desktop] Sideloading manifest and opening Word...');
+  console.log(`[desktop] Sideloading ${path.basename(manifestPath)} and opening Word...`);
 
   sideloadProcess = spawn(cmd, args, {
     cwd: rootDir,
@@ -144,6 +145,10 @@ function startDevServer() {
 }
 
 async function main() {
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`Manifest not found: ${manifestPath}`);
+  }
+
   const inUse = await canConnectToPort(port);
 
   if (inUse) {
