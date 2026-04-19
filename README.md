@@ -59,7 +59,7 @@ Nếu dùng Word Online, vẫn có thể upload thủ công manifest:
 
 ## Dùng trên máy khác của bạn
 
-1. Copy toàn bộ thư mục `word-vie-addin` sang máy mới.
+1. Copy toàn bộ thư mục `vie-converter` sang máy mới.
 2. Trên máy mới chạy:
 
 ```bash
