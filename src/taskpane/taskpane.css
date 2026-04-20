@@ -64,6 +64,19 @@ select {
   background: #fff;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 12px;
+  font-weight: 600;
+}
+
+.checkbox-row input {
+  width: 16px;
+  height: 16px;
+}
+
 .button-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

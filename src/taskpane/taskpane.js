@@ -1,7 +1,8 @@
-import { buildConversionPlan } from '../lib/vietnamese-conversion';
+﻿import { buildConversionPlan } from '../lib/vietnamese-conversion';
 
 const sourceModeEl = document.getElementById('source-mode');
 const scopeModeEl = document.getElementById('scope-mode');
+const setTimesFontEl = document.getElementById('set-times-font');
 const previewBtn = document.getElementById('preview-btn');
 const applyBtn = document.getElementById('apply-btn');
 const statusEl = document.getElementById('status');
@@ -23,7 +24,7 @@ function setStatus(message, level = 'info') {
 }
 
 function setApplyEnabled(enabled) {
-  applyBtn.disabled = !enabled;
+  applyBtn.disabled = false;
 }
 
 function getSourceMode() {
@@ -32,6 +33,10 @@ function getSourceMode() {
 
 function getScopeMode() {
   return scopeModeEl.value;
+}
+
+function shouldSetTimesNewRoman() {
+  return Boolean(setTimesFontEl && setTimesFontEl.checked);
 }
 
 function buildPlan(text, sourceMode, fontName = '') {
@@ -123,7 +128,6 @@ async function applySelection() {
   }
 
   setStatus('Đang áp dụng chuyển mã...', 'info');
-  setApplyEnabled(false);
 
   try {
     await Word.run(async (context) => {
@@ -131,17 +135,30 @@ async function applySelection() {
       const plan = buildPlan(text, getSourceMode(), fontName);
 
       if (!plan.changed) {
+        if (shouldSetTimesNewRoman()) {
+          range.font.name = 'Times New Roman';
+          await context.sync();
+          state.lastPreview = plan;
+          renderPreview(plan);
+          setStatus('Đoạn không cần chuyển mã. Đã đặt font Times New Roman.', 'ok');
+          return;
+        }
+
         renderPreview(plan);
         setStatus(plan.reason || 'Không có thay đổi để áp dụng.', 'warn');
         return;
       }
 
-      range.insertText(plan.converted, Word.InsertLocation.replace);
+      const insertedRange = range.insertText(plan.converted, Word.InsertLocation.replace);
+      if (shouldSetTimesNewRoman()) {
+        insertedRange.font.name = 'Times New Roman';
+      }
       await context.sync();
 
       state.lastPreview = plan;
       renderPreview(plan);
-      setStatus(`Đã chuyển mã thành công từ ${plan.effectiveSource} sang Unicode.`, 'ok');
+      const fontNote = shouldSetTimesNewRoman() ? ' Đã đặt font Times New Roman.' : '';
+      setStatus(`Đã chuyển mã thành công từ ${plan.effectiveSource} sang Unicode.${fontNote}`, 'ok');
     });
   } catch (error) {
     setStatus(`Không áp dụng được chuyển mã: ${error?.message || String(error)}`, 'error');
@@ -153,12 +170,10 @@ function wireEvents() {
   applyBtn.addEventListener('click', applySelection);
 
   sourceModeEl.addEventListener('change', () => {
-    setApplyEnabled(false);
     setStatus('Đã thay đổi cấu hình nguồn bảng mã. Hãy Preview lại.', 'warn');
   });
 
   scopeModeEl.addEventListener('change', () => {
-    setApplyEnabled(false);
     if (scopeModeEl.value === 'selection') {
       setStatus('Đang ở chế độ vùng chọn.', 'info');
     } else {
@@ -175,5 +190,6 @@ Office.onReady((info) => {
 
   state.ready = true;
   wireEvents();
+  setApplyEnabled(true);
   setStatus('Sẵn sàng. Hãy chọn đoạn văn bản rồi bấm Preview.', 'ok');
 });
