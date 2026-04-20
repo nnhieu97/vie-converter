@@ -151,6 +151,13 @@ pre {
   background: #fff7ef;
 }
 
+.version-tag {
+  margin: 0;
+  text-align: right;
+  color: #73819c;
+  font-size: 0.75rem;
+}
+
 @media (min-width: 720px) {
   .preview-grid {
     grid-template-columns: 1fr 1fr;
