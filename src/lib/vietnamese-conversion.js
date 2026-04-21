@@ -42,6 +42,444 @@ const SOURCE_LEGACY_TOKENS = Object.freeze({
   tcvn3: buildLegacyTokens('TCVN3'),
 });
 
+export const HARD_BOUNDARY_TOKEN_TYPES = Object.freeze({
+  PARA_END: 'PARA_END',
+  TAB: 'TAB',
+  LINE_BREAK: 'LINE_BREAK',
+  PAGE_BREAK: 'PAGE_BREAK',
+  COLUMN_BREAK: 'COLUMN_BREAK',
+  SECTION_BREAK: 'SECTION_BREAK',
+  CELL_END: 'CELL_END',
+  ROW_END: 'ROW_END',
+  TEXT: 'TEXT',
+});
+
+const HARD_BOUNDARY_SET = new Set([
+  HARD_BOUNDARY_TOKEN_TYPES.PARA_END,
+  HARD_BOUNDARY_TOKEN_TYPES.TAB,
+  HARD_BOUNDARY_TOKEN_TYPES.LINE_BREAK,
+  HARD_BOUNDARY_TOKEN_TYPES.PAGE_BREAK,
+  HARD_BOUNDARY_TOKEN_TYPES.COLUMN_BREAK,
+  HARD_BOUNDARY_TOKEN_TYPES.SECTION_BREAK,
+  HARD_BOUNDARY_TOKEN_TYPES.CELL_END,
+  HARD_BOUNDARY_TOKEN_TYPES.ROW_END,
+]);
+
+function detectBoundaryAt(text, index) {
+  if (!text || index >= text.length) return null;
+
+  const current = text[index];
+  const next = text[index + 1] || '';
+
+  if (current === '\r' && next === '\n') {
+    return { tokenType: HARD_BOUNDARY_TOKEN_TYPES.PARA_END, rawText: '\r\n', length: 2 };
+  }
+
+  if (current === '\r') return { tokenType: HARD_BOUNDARY_TOKEN_TYPES.PARA_END, rawText: '\r', length: 1 };
+  if (current === '\t') return { tokenType: HARD_BOUNDARY_TOKEN_TYPES.TAB, rawText: '\t', length: 1 };
+  if (current === '\v' || current === '\n') return { tokenType: HARD_BOUNDARY_TOKEN_TYPES.LINE_BREAK, rawText: current, length: 1 };
+  if (current === '\f') return { tokenType: HARD_BOUNDARY_TOKEN_TYPES.PAGE_BREAK, rawText: '\f', length: 1 };
+  if (current === '\u000E') return { tokenType: HARD_BOUNDARY_TOKEN_TYPES.COLUMN_BREAK, rawText: current, length: 1 };
+  if (current === '\u000F') return { tokenType: HARD_BOUNDARY_TOKEN_TYPES.SECTION_BREAK, rawText: current, length: 1 };
+  if (current === '\uE000') return { tokenType: HARD_BOUNDARY_TOKEN_TYPES.CELL_END, rawText: current, length: 1 };
+  if (current === '\uE001') return { tokenType: HARD_BOUNDARY_TOKEN_TYPES.ROW_END, rawText: current, length: 1 };
+
+  return null;
+}
+
+function isHardBoundaryTokenType(tokenType) {
+  return HARD_BOUNDARY_SET.has(tokenType);
+}
+
+function toNumberOrNull(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function createBaseAtom(rawAtom, index) {
+  const atom = rawAtom || {};
+  return {
+    id: atom.id || `atom-${index + 1}`,
+    text: typeof atom.text === 'string' ? atom.text : '',
+    tokenType: atom.tokenType || null,
+    format: atom.format || null,
+    tableIndex: toNumberOrNull(atom.tableIndex),
+    rowIndex: toNumberOrNull(atom.rowIndex),
+    cellIndex: toNumberOrNull(atom.cellIndex),
+    containerId: atom.containerId || null,
+    sourceAtomId: atom.sourceAtomId || atom.id || `atom-${index + 1}`,
+  };
+}
+
+function splitTextAtomByBoundaries(baseAtom) {
+  const tokens = [];
+  const text = baseAtom.text || '';
+  if (!text) return tokens;
+
+  let i = 0;
+  let buffer = '';
+  let bufferStart = 0;
+
+  const flushText = () => {
+    if (!buffer) return;
+    tokens.push({
+      ...baseAtom,
+      id: `${baseAtom.id}#${tokens.length + 1}`,
+      tokenType: HARD_BOUNDARY_TOKEN_TYPES.TEXT,
+      text: buffer,
+      startOffset: bufferStart,
+      endOffset: i,
+    });
+    buffer = '';
+  };
+
+  while (i < text.length) {
+    const boundary = detectBoundaryAt(text, i);
+    if (!boundary) {
+      if (!buffer) bufferStart = i;
+      buffer += text[i];
+      i += 1;
+      continue;
+    }
+
+    flushText();
+    tokens.push({
+      ...baseAtom,
+      id: `${baseAtom.id}#${tokens.length + 1}`,
+      tokenType: boundary.tokenType,
+      text: boundary.rawText,
+      startOffset: i,
+      endOffset: i + boundary.length,
+    });
+    i += boundary.length;
+  }
+
+  flushText();
+  return tokens;
+}
+
+export function normalizeSelectionAtoms(rawAtoms) {
+  if (!rawAtoms) return [];
+
+  const inputAtoms = typeof rawAtoms === 'string' ? [{ id: 'atom-1', text: rawAtoms }] : rawAtoms;
+  if (!Array.isArray(inputAtoms)) return [];
+
+  const normalized = [];
+  for (let i = 0; i < inputAtoms.length; i += 1) {
+    const baseAtom = createBaseAtom(inputAtoms[i], i);
+
+    if (isHardBoundaryTokenType(baseAtom.tokenType)) {
+      normalized.push({
+        ...baseAtom,
+        text: baseAtom.text || '',
+        startOffset: 0,
+        endOffset: (baseAtom.text || '').length,
+      });
+      continue;
+    }
+
+    const splitTokens = splitTextAtomByBoundaries(baseAtom);
+    for (const token of splitTokens) {
+      normalized.push(token);
+    }
+  }
+
+  return normalized;
+}
+
+function getContainerKey(atom) {
+  if (atom.containerId) return `container:${atom.containerId}`;
+
+  if (atom.tableIndex !== null && atom.rowIndex !== null && atom.cellIndex !== null) {
+    return `table:${atom.tableIndex}/row:${atom.rowIndex}/cell:${atom.cellIndex}`;
+  }
+
+  return 'body:main';
+}
+
+export function splitAtomsByTableContainers(atoms) {
+  const containers = [];
+  let current = null;
+
+  for (const atom of atoms || []) {
+    const containerKey = getContainerKey(atom);
+    if (!current || current.containerKey !== containerKey) {
+      current = {
+        containerKey,
+        tableIndex: atom.tableIndex,
+        rowIndex: atom.rowIndex,
+        cellIndex: atom.cellIndex,
+        atoms: [],
+      };
+      containers.push(current);
+    }
+    current.atoms.push(atom);
+  }
+
+  return containers;
+}
+
+export function splitContainerIntoTextBlocks(container) {
+  const textBlocks = [];
+  const boundaryTokens = [];
+  let currentAtoms = [];
+
+  const flushBlock = () => {
+    if (!currentAtoms.length) return;
+    const text = currentAtoms.map((item) => item.text).join('');
+    textBlocks.push({
+      id: `${container.containerKey}#block-${textBlocks.length + 1}`,
+      containerKey: container.containerKey,
+      tableIndex: container.tableIndex,
+      rowIndex: container.rowIndex,
+      cellIndex: container.cellIndex,
+      text,
+      atoms: currentAtoms,
+    });
+    currentAtoms = [];
+  };
+
+  for (const atom of container.atoms || []) {
+    if (isHardBoundaryTokenType(atom.tokenType)) {
+      flushBlock();
+      boundaryTokens.push(atom);
+      continue;
+    }
+
+    currentAtoms.push(atom);
+  }
+
+  flushBlock();
+
+  return { textBlocks, boundaryTokens };
+}
+
+export function buildSelectionTextBlocks(rawAtoms) {
+  const atoms = normalizeSelectionAtoms(rawAtoms);
+  const containers = splitAtomsByTableContainers(atoms);
+
+  const textBlocks = [];
+  const boundaryTokens = [];
+
+  for (const container of containers) {
+    const result = splitContainerIntoTextBlocks(container);
+    textBlocks.push(...result.textBlocks);
+    boundaryTokens.push(...result.boundaryTokens);
+  }
+
+  return {
+    atoms,
+    containers,
+    textBlocks,
+    boundaryTokens,
+  };
+}
+
+const FORMAT_CHECK_RULES = Object.freeze([
+  { key: 'fontName', mixed: (value) => value === '' },
+  { key: 'fontSize', mixed: (value) => value === null },
+  { key: 'bold', mixed: (value) => value === null },
+  { key: 'italic', mixed: (value) => value === null },
+  { key: 'underline', mixed: (value) => String(value).toLowerCase() === 'mixed' },
+  { key: 'fontColor', mixed: (value) => value === '' },
+  { key: 'highlightColor', mixed: (value) => value === '' },
+  { key: 'strikeThrough', mixed: (value) => value === null },
+  { key: 'doubleStrikeThrough', mixed: (value) => value === null },
+  { key: 'superscript', mixed: (value) => value === null },
+  { key: 'subscript', mixed: (value) => value === null },
+  { key: 'allCaps', mixed: (value) => value === null },
+  { key: 'smallCaps', mixed: (value) => value === null },
+  { key: 'hidden', mixed: (value) => value === null },
+  { key: 'spacing', mixed: (value) => Number(value) === 9999999 },
+  { key: 'kerning', mixed: (value) => Number(value) === 9999999 },
+  { key: 'scale', mixed: (value) => Number(value) === 9999999 },
+  { key: 'position', mixed: (value) => Number(value) === 9999999 },
+]);
+
+function areValuesEqual(a, b) {
+  return Object.is(a, b);
+}
+
+function getFormatValue(formatSnapshot, key) {
+  if (!formatSnapshot || typeof formatSnapshot !== 'object') return undefined;
+  if (!Object.prototype.hasOwnProperty.call(formatSnapshot, key)) return undefined;
+  return formatSnapshot[key];
+}
+
+export function analyzeTextBlockFormat(textBlock) {
+  const atoms = (textBlock && textBlock.atoms) || [];
+  const nonUniformProps = [];
+  const uniformFormat = {};
+
+  for (const rule of FORMAT_CHECK_RULES) {
+    const values = atoms.map((atom) => getFormatValue(atom.format, rule.key));
+
+    if (!values.length || values.some((value) => value === undefined)) {
+      nonUniformProps.push(`${rule.key}:unknown`);
+      continue;
+    }
+
+    if (values.some((value) => rule.mixed(value))) {
+      nonUniformProps.push(`${rule.key}:mixed`);
+      continue;
+    }
+
+    const base = values[0];
+    const hasDifferent = values.some((value) => !areValuesEqual(value, base));
+    if (hasDifferent) {
+      nonUniformProps.push(`${rule.key}:mixed`);
+      continue;
+    }
+
+    uniformFormat[rule.key] = base;
+  }
+
+  return {
+    uniform: nonUniformProps.length === 0,
+    uniformFormat,
+    nonUniformProps,
+  };
+}
+
+export function buildTextBlockChangeItem(textBlock, options = {}) {
+  const sourceMode = options.sourceMode || 'auto';
+  const beforeText = textBlock.text || '';
+
+  if (!beforeText) {
+    return {
+      ...textBlock,
+      action: 'noop',
+      comment: 'Skip empty block.',
+      changed: false,
+      beforeText,
+      afterText: beforeText,
+      detected: null,
+      effectiveSource: null,
+      hint: null,
+      reason: 'Empty block.',
+      formatCheck: {
+        uniform: true,
+        uniformFormat: {},
+        nonUniformProps: [],
+      },
+    };
+  }
+
+  const formatCheck = analyzeTextBlockFormat(textBlock);
+  if (!formatCheck.uniform) {
+    return {
+      ...textBlock,
+      action: 'skip',
+      comment: `Skip block due to mixed format: ${formatCheck.nonUniformProps.join(', ')}`,
+      changed: false,
+      beforeText,
+      afterText: beforeText,
+      detected: null,
+      effectiveSource: null,
+      hint: null,
+      reason: 'Mixed formatting.',
+      formatCheck,
+    };
+  }
+
+  const fontName = formatCheck.uniformFormat.fontName || '';
+  const plan = buildConversionPlan(beforeText, { sourceMode, fontName });
+
+  if (!plan.changed) {
+    return {
+      ...textBlock,
+      action: 'noop',
+      comment: plan.reason || 'No change after conversion.',
+      changed: false,
+      beforeText,
+      afterText: beforeText,
+      detected: plan.detected,
+      effectiveSource: plan.effectiveSource,
+      hint: plan.hint,
+      reason: plan.reason,
+      formatCheck,
+    };
+  }
+
+  return {
+    ...textBlock,
+    action: 'convert',
+    comment: `Converted from ${plan.effectiveSource || 'unknown'} to unicode.`,
+    changed: true,
+    beforeText,
+    afterText: plan.converted,
+    detected: plan.detected,
+    effectiveSource: plan.effectiveSource,
+    hint: plan.hint,
+    reason: null,
+    formatCheck,
+  };
+}
+
+export function buildChangePlanFromAtoms(rawAtoms, options = {}) {
+  const sourceMode = options.sourceMode || 'auto';
+  const atoms = normalizeSelectionAtoms(rawAtoms);
+  const containers = splitAtomsByTableContainers(atoms);
+  const items = [];
+  let outputText = '';
+
+  for (const container of containers) {
+    let currentAtoms = [];
+
+    const flushBlock = () => {
+      if (!currentAtoms.length) return;
+
+      const text = currentAtoms.map((atom) => atom.text || '').join('');
+      const block = {
+        id: `${container.containerKey}#block-${items.length + 1}`,
+        containerKey: container.containerKey,
+        tableIndex: container.tableIndex,
+        rowIndex: container.rowIndex,
+        cellIndex: container.cellIndex,
+        text,
+        atoms: currentAtoms,
+      };
+
+      const item = buildTextBlockChangeItem(block, { sourceMode });
+      items.push(item);
+      outputText += item.afterText;
+      currentAtoms = [];
+    };
+
+    for (const atom of container.atoms || []) {
+      if (isHardBoundaryTokenType(atom.tokenType)) {
+        flushBlock();
+        outputText += atom.text || '';
+      } else {
+        currentAtoms.push(atom);
+      }
+    }
+
+    flushBlock();
+  }
+
+  const inputText = atoms.map((atom) => atom.text || '').join('');
+  const summary = {
+    totalBlocks: items.length,
+    convertedCount: items.filter((item) => item.action === 'convert').length,
+    skippedCount: items.filter((item) => item.action === 'skip').length,
+    noopCount: items.filter((item) => item.action === 'noop').length,
+  };
+
+  return {
+    sourceMode,
+    atoms,
+    containers,
+    items,
+    inputText,
+    outputText,
+    changed: inputText !== outputText,
+    summary,
+    comments: items.filter((item) => item.action === 'skip').map((item) => item.comment),
+  };
+}
+
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

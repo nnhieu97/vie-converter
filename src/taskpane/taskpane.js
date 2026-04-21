@@ -1,4 +1,4 @@
-﻿import { buildConversionPlan } from '../lib/vietnamese-conversion';
+import { buildChangePlanFromAtoms } from '../lib/vietnamese-conversion';
 
 const sourceModeEl = document.getElementById('source-mode');
 const scopeModeEl = document.getElementById('scope-mode');
@@ -23,7 +23,7 @@ function setStatus(message, level = 'info') {
   }
 }
 
-function setApplyEnabled(enabled) {
+function setApplyEnabled(_enabled) {
   applyBtn.disabled = false;
 }
 
@@ -39,48 +39,169 @@ function shouldSetTimesNewRoman() {
   return Boolean(setTimesFontEl && setTimesFontEl.checked);
 }
 
-function buildPlan(text, sourceMode, fontName = '') {
-  return buildConversionPlan(text, { sourceMode, fontName });
+function pickFontValue(raw, key) {
+  if (!raw || typeof raw !== 'object') return undefined;
+  if (!Object.prototype.hasOwnProperty.call(raw, key)) return undefined;
+  return raw[key];
 }
 
-function countCharDiff(before, after) {
-  const maxLen = Math.max(before.length, after.length);
-  let diff = Math.abs(before.length - after.length);
-  const minLen = Math.min(before.length, after.length);
-  for (let i = 0; i < minLen; i += 1) {
-    if (before[i] !== after[i]) diff += 1;
-  }
-  return Math.min(diff, maxLen);
+function toFormatSnapshot(font) {
+  const raw = font && typeof font.toJSON === 'function' ? font.toJSON() : {};
+  return {
+    fontName: pickFontValue(raw, 'name'),
+    fontSize: pickFontValue(raw, 'size'),
+    bold: pickFontValue(raw, 'bold'),
+    italic: pickFontValue(raw, 'italic'),
+    underline: pickFontValue(raw, 'underline'),
+    fontColor: pickFontValue(raw, 'color'),
+    highlightColor: pickFontValue(raw, 'highlightColor'),
+    strikeThrough: pickFontValue(raw, 'strikeThrough'),
+    doubleStrikeThrough: pickFontValue(raw, 'doubleStrikeThrough'),
+    superscript: pickFontValue(raw, 'superscript'),
+    subscript: pickFontValue(raw, 'subscript'),
+    allCaps: pickFontValue(raw, 'allCaps'),
+    smallCaps: pickFontValue(raw, 'smallCaps'),
+    hidden: pickFontValue(raw, 'hidden'),
+    spacing: pickFontValue(raw, 'spacing'),
+    kerning: pickFontValue(raw, 'kerning'),
+    scale: pickFontValue(raw, 'scaling'),
+    position: pickFontValue(raw, 'position'),
+  };
 }
 
-function renderPreview(plan) {
-  beforeEl.textContent = plan.original || '';
-  afterEl.textContent = plan.converted || '';
+function normalizeWithoutSplitChars(text) {
+  return String(text || '').replace(/[\r\t\v\n\f]/g, '');
+}
 
-  const hintPart = plan.hint ? ` | ${plan.hint}` : '';
-  const fontPart = plan.fontName ? ` | font: ${plan.fontName}` : '';
+function buildUnitPlans(units, sourceMode) {
+  return units.map((unit, index) => {
+    const atom = {
+      id: `atom-${index + 1}`,
+      text: unit.text || '',
+      format: unit.format || null,
+    };
+    const plan = buildChangePlanFromAtoms([atom], { sourceMode });
+    const item = (plan.items && plan.items[0]) || null;
 
-  if (!plan.changed) {
-    const detectedText = plan.detected ? ` | detect: ${plan.detected}` : '';
-    metaEl.textContent = `Không có thay đổi${detectedText}${fontPart}${plan.reason ? ` | ${plan.reason}` : ''}${hintPart}`;
+    return {
+      unit,
+      plan,
+      action: item ? item.action : 'noop',
+      comment: item ? item.comment : null,
+      beforeText: plan.inputText || unit.text || '',
+      afterText: plan.outputText || unit.text || '',
+      changed: Boolean(item && item.action === 'convert'),
+    };
+  });
+}
+
+function mergeUnitPlans(unitPlans, fallbackInputText = '') {
+  const summary = unitPlans.reduce(
+    (acc, entry) => {
+      acc.totalBlocks += 1;
+      if (entry.action === 'convert') acc.convertedCount += 1;
+      else if (entry.action === 'skip') acc.skippedCount += 1;
+      else acc.noopCount += 1;
+      return acc;
+    },
+    { totalBlocks: 0, convertedCount: 0, skippedCount: 0, noopCount: 0 }
+  );
+
+  const inputText = fallbackInputText || unitPlans.map((entry) => entry.beforeText).join('\n');
+  const outputText = unitPlans.map((entry) => entry.afterText).join('\n');
+  const comments = unitPlans.filter((entry) => entry.action === 'skip' && entry.comment).map((entry) => entry.comment);
+
+  return {
+    changed: unitPlans.some((entry) => entry.action === 'convert'),
+    inputText,
+    outputText,
+    summary,
+    comments,
+  };
+}
+
+function renderChangePlan(changePlan) {
+  beforeEl.textContent = changePlan.inputText || '';
+  afterEl.textContent = changePlan.outputText || '';
+
+  const summary = changePlan.summary || { totalBlocks: 0, convertedCount: 0, skippedCount: 0, noopCount: 0 };
+  const skipComment = changePlan.comments && changePlan.comments.length ? ` | ${changePlan.comments[0]}` : '';
+
+  if (!changePlan.changed) {
+    metaEl.textContent = `Không có thay đổi | block: ${summary.totalBlocks} | convert: ${summary.convertedCount} | skip: ${summary.skippedCount}${skipComment}`;
     setApplyEnabled(false);
     return;
   }
 
-  const diffCount = countCharDiff(plan.original, plan.converted);
-  const detectedPart = plan.detected ? `detect: ${plan.detected}` : 'detect: manual';
-  metaEl.textContent = `${detectedPart} | source: ${plan.effectiveSource}${fontPart} | thay đổi ký tự: ~${diffCount}${hintPart}`;
+  metaEl.textContent = `Block: ${summary.totalBlocks} | convert: ${summary.convertedCount} | skip: ${summary.skippedCount} | giữ nguyên: ${summary.noopCount}${skipComment}`;
   setApplyEnabled(true);
 }
 
-async function getSelection(context) {
+async function getSelectionData(context) {
   const range = context.document.getSelection();
-  range.load('text,font/name');
+  range.load('text,font/name,isEmpty');
   await context.sync();
+
+  if (range.isEmpty) {
+    return {
+      range,
+      text: '',
+      isEmpty: true,
+      units: [],
+    };
+  }
+
+  const textRanges = range.getTextRanges(['\r', '\t', '\v', '\n', '\f'], false);
+  textRanges.load('items');
+  await context.sync();
+
+  let units = [];
+  if (textRanges.items.length) {
+    for (const item of textRanges.items) {
+      item.load('text');
+      item.font.load();
+    }
+    await context.sync();
+
+    units = textRanges.items.map((item, index) => ({
+      id: `unit-${index + 1}`,
+      range: item,
+      text: item.text || '',
+      format: toFormatSnapshot(item.font),
+    }));
+
+    const selectedNormalized = normalizeWithoutSplitChars(range.text || '');
+    const unitsNormalized = normalizeWithoutSplitChars(units.map((item) => item.text || '').join(''));
+    if (!selectedNormalized || selectedNormalized !== unitsNormalized) {
+      range.font.load();
+      await context.sync();
+      units = [
+        {
+          id: 'unit-1',
+          range,
+          text: range.text || '',
+          format: toFormatSnapshot(range.font),
+        },
+      ];
+    }
+  } else {
+    range.font.load();
+    await context.sync();
+    units = [
+      {
+        id: 'unit-1',
+        range,
+        text: range.text || '',
+        format: toFormatSnapshot(range.font),
+      },
+    ];
+  }
+
   return {
     range,
     text: range.text || '',
-    fontName: (range.font && range.font.name) || '',
+    isEmpty: false,
+    units,
   };
 }
 
@@ -100,15 +221,30 @@ async function previewSelection() {
 
   try {
     await Word.run(async (context) => {
-      const { text, fontName } = await getSelection(context);
-      const plan = buildPlan(text, getSourceMode(), fontName);
-      state.lastPreview = plan;
-      renderPreview(plan);
+      const selection = await getSelectionData(context);
+      if (selection.isEmpty) {
+        state.lastPreview = null;
+        beforeEl.textContent = '';
+        afterEl.textContent = '';
+        metaEl.textContent = 'Vùng chọn rỗng. Hãy bôi đen đoạn cần xử lý.';
+        setStatus('Không có vùng chọn. Hãy bôi đen text trước khi Preview.', 'warn');
+        return;
+      }
 
-      if (plan.changed) {
-        setStatus('Preview sẵn sàng. Kiểm tra lại trước khi Apply.', 'ok');
+      const unitPlans = buildUnitPlans(selection.units, getSourceMode());
+      const previewPlan = mergeUnitPlans(unitPlans, selection.text);
+      state.lastPreview = previewPlan;
+      renderChangePlan(previewPlan);
+
+      if (previewPlan.changed) {
+        setStatus(
+          `Preview sẵn sàng. Convert: ${previewPlan.summary.convertedCount}, skip: ${previewPlan.summary.skippedCount}.`,
+          'ok'
+        );
+      } else if (previewPlan.summary.skippedCount > 0) {
+        setStatus(`Không convert do mixed format. Skip ${previewPlan.summary.skippedCount} block.`, 'warn');
       } else {
-        setStatus(plan.reason || 'Không có thay đổi.', 'warn');
+        setStatus('Không có thay đổi.', 'warn');
       }
     });
   } catch (error) {
@@ -131,34 +267,61 @@ async function applySelection() {
 
   try {
     await Word.run(async (context) => {
-      const { range, text, fontName } = await getSelection(context);
-      const plan = buildPlan(text, getSourceMode(), fontName);
-
-      if (!plan.changed) {
-        if (shouldSetTimesNewRoman()) {
-          range.font.name = 'Times New Roman';
-          await context.sync();
-          state.lastPreview = plan;
-          renderPreview(plan);
-          setStatus('Đoạn không cần chuyển mã. Đã đặt font Times New Roman.', 'ok');
-          return;
-        }
-
-        renderPreview(plan);
-        setStatus(plan.reason || 'Không có thay đổi để áp dụng.', 'warn');
+      const selection = await getSelectionData(context);
+      if (selection.isEmpty) {
+        setStatus('Không có vùng chọn để Apply. Hãy bôi đen text trước.', 'warn');
         return;
       }
 
-      const insertedRange = range.insertText(plan.converted, Word.InsertLocation.replace);
-      if (shouldSetTimesNewRoman()) {
-        insertedRange.font.name = 'Times New Roman';
-      }
-      await context.sync();
+      const unitPlans = buildUnitPlans(selection.units, getSourceMode());
+      const resultPlan = mergeUnitPlans(unitPlans, selection.text);
 
-      state.lastPreview = plan;
-      renderPreview(plan);
-      const fontNote = shouldSetTimesNewRoman() ? ' Đã đặt font Times New Roman.' : '';
-      setStatus(`Đã chuyển mã thành công từ ${plan.effectiveSource} sang Unicode.${fontNote}`, 'ok');
+      const setTimes = shouldSetTimesNewRoman();
+      let convertApplied = 0;
+      let fontApplied = 0;
+      let runtimeErrors = 0;
+
+      for (const entry of unitPlans) {
+        if (entry.action === 'skip') {
+          continue;
+        }
+
+        try {
+          if (entry.action === 'convert') {
+            const replaced = entry.unit.range.insertText(entry.afterText, Word.InsertLocation.replace);
+            if (setTimes) {
+              replaced.font.name = 'Times New Roman';
+              fontApplied += 1;
+            }
+            await context.sync();
+            convertApplied += 1;
+            continue;
+          }
+
+          if (setTimes) {
+            entry.unit.range.font.name = 'Times New Roman';
+            await context.sync();
+            fontApplied += 1;
+          }
+        } catch (_error) {
+          runtimeErrors += 1;
+        }
+      }
+
+      state.lastPreview = resultPlan;
+      renderChangePlan(resultPlan);
+
+      const summary = resultPlan.summary;
+      let message = `Đã xử lý theo từng block: convert ${convertApplied}/${summary.convertedCount}, skip ${summary.skippedCount}.`;
+      if (setTimes) {
+        message += ` Đặt Times New Roman cho ${fontApplied} block không bị skip.`;
+      }
+      if (runtimeErrors > 0) {
+        message += ` Có ${runtimeErrors} block lỗi khi apply.`;
+        setStatus(message, 'warn');
+      } else {
+        setStatus(message, 'ok');
+      }
     });
   } catch (error) {
     setStatus(`Không áp dụng được chuyển mã: ${error?.message || String(error)}`, 'error');
