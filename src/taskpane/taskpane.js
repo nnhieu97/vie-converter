@@ -45,6 +45,19 @@ function shouldSetTimesNewRoman() {
   return Boolean(setTimesFontEl && setTimesFontEl.checked);
 }
 
+function canInsertWordComments() {
+  try {
+    return (
+      typeof Office !== 'undefined' &&
+      Office.context &&
+      Office.context.requirements &&
+      Office.context.requirements.isSetSupported('WordApi', '1.4')
+    );
+  } catch (_error) {
+    return false;
+  }
+}
+
 function toFormatSnapshot(font) {
   const raw = font && typeof font.toJSON === 'function' ? font.toJSON() : {};
   return createFormatSnapshotFromRaw(raw);
@@ -210,12 +223,23 @@ async function applySelection() {
       const { unitPlans, mergedPlan } = buildSelectionResult(selection, getSourceMode());
 
       const setTimes = shouldSetTimesNewRoman();
+      const supportComments = canInsertWordComments();
       let convertApplied = 0;
       let fontApplied = 0;
+      let commentAdded = 0;
       let runtimeErrors = 0;
 
       for (const entry of unitPlans) {
         if (entry.action === 'skip') {
+          if (supportComments && entry.comment) {
+            try {
+              entry.range.insertComment(entry.comment);
+              await context.sync();
+              commentAdded += 1;
+            } catch (_error) {
+              runtimeErrors += 1;
+            }
+          }
           continue;
         }
 
@@ -248,6 +272,11 @@ async function applySelection() {
       let message = `Đã xử lý theo từng block: convert ${convertApplied}/${summary.convertedCount}, skip ${summary.skippedCount}.`;
       if (setTimes) {
         message += ` Đặt Times New Roman cho ${fontApplied} block không bị skip.`;
+      }
+      if (supportComments && commentAdded > 0) {
+        message += ` Đã thêm ${commentAdded} comment cho block skip.`;
+      } else if (!supportComments && summary.skippedCount > 0) {
+        message += ' Host hiện tại không hỗ trợ thêm comment tự động (cần WordApi 1.4+).';
       }
       if (runtimeErrors > 0) {
         message += ` Có ${runtimeErrors} block lỗi khi apply.`;

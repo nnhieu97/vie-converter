@@ -403,7 +403,7 @@ export function buildTextBlockChangeItem(textBlock, options = {}) {
     return {
       ...textBlock,
       action: 'skip',
-      comment: `Skip block due to mixed format: ${formatCheck.nonUniformProps.join(', ')}`,
+      comment: `Bỏ qua block do định dạng hỗn hợp: ${formatCheck.nonUniformProps.join(', ')}`,
       changed: false,
       beforeText,
       afterText: beforeText,
