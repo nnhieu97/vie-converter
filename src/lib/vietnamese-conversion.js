@@ -572,9 +572,14 @@ export function mergeUnitChangePlans(unitPlans, fallbackInputText = '') {
       if (entry.action === 'convert') acc.convertedCount += 1;
       else if (entry.action === 'skip') acc.skippedCount += 1;
       else acc.noopCount += 1;
+
+      if (entry.changeItem && entry.changeItem.effectiveSource === 'vni') acc.vni += 1;
+      else if (entry.changeItem && entry.changeItem.effectiveSource === 'tcvn3') acc.tcvn3 += 1;
+      else acc.unicodeOrUnknown += 1;
+
       return acc;
     },
-    { totalBlocks: 0, convertedCount: 0, skippedCount: 0, noopCount: 0 }
+    { totalBlocks: 0, convertedCount: 0, skippedCount: 0, noopCount: 0, vni: 0, tcvn3: 0, unicodeOrUnknown: 0 }
   );
 
   const inputText = fallbackInputText || plans.map((entry) => entry.beforeText).join('\n');

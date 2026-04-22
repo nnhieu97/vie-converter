@@ -1,4 +1,4 @@
-import {
+﻿import {
   buildUnitChangePlans,
   createFormatSnapshotFromRaw,
   mergeUnitChangePlans,
@@ -67,16 +67,22 @@ function renderChangePlan(changePlan) {
   beforeEl.textContent = changePlan.inputText || '';
   afterEl.textContent = changePlan.outputText || '';
 
-  const summary = changePlan.summary || { totalBlocks: 0, convertedCount: 0, skippedCount: 0, noopCount: 0 };
+  const summary = changePlan.summary || { totalBlocks: 0, convertedCount: 0, skippedCount: 0, noopCount: 0, vni: 0, tcvn3: 0, unicodeOrUnknown: 0 };
   const skipComment = changePlan.comments && changePlan.comments.length ? ` | ${changePlan.comments[0]}` : '';
 
   if (!changePlan.changed) {
-    metaEl.textContent = `Không có thay đổi | block: ${summary.totalBlocks} | convert: ${summary.convertedCount} | skip: ${summary.skippedCount}${skipComment}`;
+    metaEl.textContent =
+      `Không có thay đổi | block: ${summary.totalBlocks} | convert: ${summary.convertedCount} | skip: ${summary.skippedCount}` +
+      ` | vni: ${summary.vni} | tcvn3: ${summary.tcvn3} | unicode/unknown: ${summary.unicodeOrUnknown}` +
+      `${skipComment}`;
     setApplyEnabled(false);
     return;
   }
 
-  metaEl.textContent = `Block: ${summary.totalBlocks} | convert: ${summary.convertedCount} | skip: ${summary.skippedCount} | giữ nguyên: ${summary.noopCount}${skipComment}`;
+  metaEl.textContent =
+    `Block: ${summary.totalBlocks} | convert: ${summary.convertedCount} | skip: ${summary.skippedCount} | giữ nguyên: ${summary.noopCount}` +
+    ` | vni: ${summary.vni} | tcvn3: ${summary.tcvn3} | unicode/unknown: ${summary.unicodeOrUnknown}` +
+    `${skipComment}`;
   setApplyEnabled(true);
 }
 
@@ -226,7 +232,6 @@ async function applySelection() {
       const supportComments = canInsertWordComments();
       let convertApplied = 0;
       let fontApplied = 0;
-      let commentAdded = 0;
       let runtimeErrors = 0;
 
       for (const entry of unitPlans) {
@@ -235,7 +240,6 @@ async function applySelection() {
             try {
               entry.range.insertComment(entry.comment);
               await context.sync();
-              commentAdded += 1;
             } catch (_error) {
               runtimeErrors += 1;
             }
@@ -272,11 +276,6 @@ async function applySelection() {
       let message = `Đã xử lý theo từng block: convert ${convertApplied}/${summary.convertedCount}, skip ${summary.skippedCount}.`;
       if (setTimes) {
         message += ` Đặt Times New Roman cho ${fontApplied} block không bị skip.`;
-      }
-      if (supportComments && commentAdded > 0) {
-        message += ` Đã thêm ${commentAdded} comment cho block skip.`;
-      } else if (!supportComments && summary.skippedCount > 0) {
-        message += ' Host hiện tại không hỗ trợ thêm comment tự động (cần WordApi 1.4+).';
       }
       if (runtimeErrors > 0) {
         message += ` Có ${runtimeErrors} block lỗi khi apply.`;
@@ -318,3 +317,4 @@ Office.onReady((info) => {
   setApplyEnabled(true);
   setStatus('Sẵn sàng. Hãy chọn đoạn văn bản rồi bấm Preview.', 'ok');
 });
+

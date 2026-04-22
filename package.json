@@ -1,6 +1,6 @@
 {
   "name": "vie-converter",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "private": true,
   "description": "Personal Word Add-in for converting legacy Vietnamese encodings to Unicode.",
   "scripts": {
