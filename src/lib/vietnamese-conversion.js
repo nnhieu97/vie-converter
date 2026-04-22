@@ -297,6 +297,38 @@ const FORMAT_CHECK_RULES = Object.freeze([
   { key: 'position', mixed: (value) => Number(value) === 9999999 },
 ]);
 
+export const FORMAT_SNAPSHOT_MAP = Object.freeze({
+  fontName: 'name',
+  fontSize: 'size',
+  bold: 'bold',
+  italic: 'italic',
+  underline: 'underline',
+  fontColor: 'color',
+  highlightColor: 'highlightColor',
+  strikeThrough: 'strikeThrough',
+  doubleStrikeThrough: 'doubleStrikeThrough',
+  superscript: 'superscript',
+  subscript: 'subscript',
+  allCaps: 'allCaps',
+  smallCaps: 'smallCaps',
+  hidden: 'hidden',
+  spacing: 'spacing',
+  kerning: 'kerning',
+  scale: 'scaling',
+  position: 'position',
+});
+
+export function createFormatSnapshotFromRaw(raw) {
+  const input = raw && typeof raw === 'object' ? raw : {};
+  const snapshot = {};
+
+  for (const [targetKey, sourceKey] of Object.entries(FORMAT_SNAPSHOT_MAP)) {
+    snapshot[targetKey] = Object.prototype.hasOwnProperty.call(input, sourceKey) ? input[sourceKey] : undefined;
+  }
+
+  return snapshot;
+}
+
 function areValuesEqual(a, b) {
   return Object.is(a, b);
 }
@@ -477,6 +509,84 @@ export function buildChangePlanFromAtoms(rawAtoms, options = {}) {
     changed: inputText !== outputText,
     summary,
     comments: items.filter((item) => item.action === 'skip').map((item) => item.comment),
+  };
+}
+
+function stripStructuralBreakChars(text) {
+  return String(text || '').replace(/[\r\n\v\f\u000E\u000F]+/g, '');
+}
+
+function stripBoundaryTabs(text) {
+  // In table selections, Word may expose cell separators as boundary tabs.
+  // Keep tabs inside content, but drop leading/trailing tabs coming from boundaries.
+  return String(text || '').replace(/^\t+|\t+$/g, '');
+}
+
+function stripControlMarkers(text) {
+  // Keep printable legacy chars (including U+00B6/U+00A4 if present in content),
+  // only drop structural control codes such as end-of-cell marker (0x07).
+  return String(text || '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+}
+
+export function sanitizeUnitText(text) {
+  return stripControlMarkers(stripBoundaryTabs(stripStructuralBreakChars(text)));
+}
+
+export function normalizeTextWithoutSplitChars(text) {
+  return String(text || '').replace(/[\r\t\v\n\f]/g, '');
+}
+
+export function buildUnitChangePlans(rawUnits, options = {}) {
+  const sourceMode = options.sourceMode || 'auto';
+  const units = Array.isArray(rawUnits) ? rawUnits : [];
+
+  return units.map((unit, index) => {
+    const safeText = sanitizeUnitText(unit.text || '');
+    const atom = {
+      id: unit.id || `atom-${index + 1}`,
+      text: safeText,
+      format: unit.format || null,
+    };
+
+    const plan = buildChangePlanFromAtoms([atom], { sourceMode });
+    const item = (plan.items && plan.items[0]) || null;
+
+    return {
+      ...unit,
+      action: item ? item.action : 'noop',
+      comment: item ? item.comment : null,
+      beforeText: plan.inputText || safeText,
+      afterText: sanitizeUnitText(plan.outputText || safeText),
+      changed: Boolean(item && item.action === 'convert'),
+      changeItem: item,
+      plan,
+    };
+  });
+}
+
+export function mergeUnitChangePlans(unitPlans, fallbackInputText = '') {
+  const plans = Array.isArray(unitPlans) ? unitPlans : [];
+  const summary = plans.reduce(
+    (acc, entry) => {
+      acc.totalBlocks += 1;
+      if (entry.action === 'convert') acc.convertedCount += 1;
+      else if (entry.action === 'skip') acc.skippedCount += 1;
+      else acc.noopCount += 1;
+      return acc;
+    },
+    { totalBlocks: 0, convertedCount: 0, skippedCount: 0, noopCount: 0 }
+  );
+
+  const inputText = fallbackInputText || plans.map((entry) => entry.beforeText).join('\n');
+  const outputText = plans.map((entry) => entry.afterText).join('\n');
+  const comments = plans.filter((entry) => entry.action === 'skip' && entry.comment).map((entry) => entry.comment);
+
+  return {
+    changed: plans.some((entry) => entry.action === 'convert'),
+    inputText,
+    outputText,
+    summary,
+    comments,
   };
 }
 
