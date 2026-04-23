@@ -9,6 +9,7 @@
 const sourceModeEl = document.getElementById('source-mode');
 const scopeModeEl = document.getElementById('scope-mode');
 const setTimesFontEl = document.getElementById('set-times-font');
+const allowMixedFormatEl = document.getElementById('allow-mixed-format');
 const previewBtn = document.getElementById('preview-btn');
 const applyBtn = document.getElementById('apply-btn');
 const statusEl = document.getElementById('status');
@@ -43,6 +44,10 @@ function getScopeMode() {
 
 function shouldSetTimesNewRoman() {
   return Boolean(setTimesFontEl && setTimesFontEl.checked);
+}
+
+function shouldAllowMixedFormat() {
+  return Boolean(allowMixedFormatEl && allowMixedFormatEl.checked);
 }
 
 function canInsertWordComments() {
@@ -86,8 +91,8 @@ function renderChangePlan(changePlan) {
   setApplyEnabled(true);
 }
 
-function buildSelectionResult(selection, sourceMode) {
-  const unitPlans = buildUnitChangePlans(selection.units, { sourceMode });
+function buildSelectionResult(selection, sourceMode, allowMixedFormat) {
+  const unitPlans = buildUnitChangePlans(selection.units, { sourceMode, allowMixedFormat });
   const mergedPlan = mergeUnitChangePlans(unitPlans, selection.text);
   return { unitPlans, mergedPlan };
 }
@@ -188,7 +193,7 @@ async function previewSelection() {
         return;
       }
 
-      const { mergedPlan } = buildSelectionResult(selection, getSourceMode());
+      const { mergedPlan } = buildSelectionResult(selection, getSourceMode(), shouldAllowMixedFormat());
       state.lastPreview = mergedPlan;
       renderChangePlan(mergedPlan);
 
@@ -226,7 +231,7 @@ async function applySelection() {
         return;
       }
 
-      const { unitPlans, mergedPlan } = buildSelectionResult(selection, getSourceMode());
+      const { unitPlans, mergedPlan } = buildSelectionResult(selection, getSourceMode(), shouldAllowMixedFormat());
 
       const setTimes = shouldSetTimesNewRoman();
       const supportComments = canInsertWordComments();
@@ -297,6 +302,12 @@ function wireEvents() {
     setStatus('Đã thay đổi cấu hình nguồn bảng mã. Hãy Preview lại.', 'warn');
   });
 
+  if (allowMixedFormatEl) {
+    allowMixedFormatEl.addEventListener('change', () => {
+      setStatus('Đã thay đổi tùy chọn mixed format. Hãy Preview lại trước khi Apply.', 'warn');
+    });
+  }
+
   scopeModeEl.addEventListener('change', () => {
     if (scopeModeEl.value === 'selection') {
       setStatus('Đang ở chế độ vùng chọn.', 'info');
@@ -317,4 +328,3 @@ Office.onReady((info) => {
   setApplyEnabled(true);
   setStatus('Sẵn sàng. Hãy chọn đoạn văn bản rồi bấm Preview.', 'ok');
 });
-

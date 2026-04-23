@@ -376,6 +376,7 @@ export function analyzeTextBlockFormat(textBlock) {
 
 export function buildTextBlockChangeItem(textBlock, options = {}) {
   const sourceMode = options.sourceMode || 'auto';
+  const allowMixedFormat = Boolean(options.allowMixedFormat);
   const beforeText = textBlock.text || '';
 
   if (!beforeText) {
@@ -399,7 +400,7 @@ export function buildTextBlockChangeItem(textBlock, options = {}) {
   }
 
   const formatCheck = analyzeTextBlockFormat(textBlock);
-  if (!formatCheck.uniform) {
+  if (!formatCheck.uniform && !allowMixedFormat) {
     return {
       ...textBlock,
       action: 'skip',
@@ -451,6 +452,7 @@ export function buildTextBlockChangeItem(textBlock, options = {}) {
 
 export function buildChangePlanFromAtoms(rawAtoms, options = {}) {
   const sourceMode = options.sourceMode || 'auto';
+  const allowMixedFormat = Boolean(options.allowMixedFormat);
   const atoms = normalizeSelectionAtoms(rawAtoms);
   const containers = splitAtomsByTableContainers(atoms);
   const items = [];
@@ -473,7 +475,7 @@ export function buildChangePlanFromAtoms(rawAtoms, options = {}) {
         atoms: currentAtoms,
       };
 
-      const item = buildTextBlockChangeItem(block, { sourceMode });
+      const item = buildTextBlockChangeItem(block, { sourceMode, allowMixedFormat });
       items.push(item);
       outputText += item.afterText;
       currentAtoms = [];
@@ -538,6 +540,7 @@ export function normalizeTextWithoutSplitChars(text) {
 
 export function buildUnitChangePlans(rawUnits, options = {}) {
   const sourceMode = options.sourceMode || 'auto';
+  const allowMixedFormat = Boolean(options.allowMixedFormat);
   const units = Array.isArray(rawUnits) ? rawUnits : [];
 
   return units.map((unit, index) => {
@@ -548,7 +551,7 @@ export function buildUnitChangePlans(rawUnits, options = {}) {
       format: unit.format || null,
     };
 
-    const plan = buildChangePlanFromAtoms([atom], { sourceMode });
+    const plan = buildChangePlanFromAtoms([atom], { sourceMode, allowMixedFormat });
     const item = (plan.items && plan.items[0]) || null;
 
     return {
