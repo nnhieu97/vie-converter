@@ -63,6 +63,13 @@ function canInsertWordComments() {
   }
 }
 
+function formatElapsed(ms) {
+  const totalSeconds = Math.floor(Math.max(0, ms) / 1000);
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${minutes}:${seconds}`;
+}
+
 function toFormatSnapshot(font) {
   const raw = font && typeof font.toJSON === 'function' ? font.toJSON() : {};
   return createFormatSnapshotFromRaw(raw);
@@ -221,7 +228,7 @@ async function applySelection() {
     return;
   }
 
-  setStatus('Đang áp dụng chuyển mã...', 'info');
+  setStatus('Đang phân tích vùng chọn...', 'info');
 
   try {
     await Word.run(async (context) => {
@@ -235,52 +242,74 @@ async function applySelection() {
 
       const setTimes = shouldSetTimesNewRoman();
       const supportComments = canInsertWordComments();
+      const totalBlocks = unitPlans.length;
+      const startedAt = Date.now();
+      let processedBlocks = 0;
       let convertApplied = 0;
       let fontApplied = 0;
       let runtimeErrors = 0;
 
-      for (const entry of unitPlans) {
-        if (entry.action === 'skip') {
-          if (supportComments && entry.comment) {
-            try {
-              entry.range.insertComment(entry.comment);
-              await context.sync();
-            } catch (_error) {
-              runtimeErrors += 1;
-            }
-          }
-          continue;
-        }
+      const progressPercent = totalBlocks > 0 ? 0 : 100;
+      setStatus(`Đang áp dụng chuyển mã... 0/${totalBlocks} block (${progressPercent}%).`, 'info');
 
-        try {
-          if (entry.action === 'convert') {
-            const replaced = entry.range.insertText(entry.afterText, Word.InsertLocation.replace);
-            if (setTimes) {
-              replaced.font.name = 'Times New Roman';
+      const buildProgressMessage = () => {
+        const percent = totalBlocks > 0 ? Math.round((processedBlocks * 100) / totalBlocks) : 100;
+        const elapsed = Date.now() - startedAt;
+        let message = `Đang áp dụng chuyển mã... ${processedBlocks}/${totalBlocks} block (${percent}%).`;
+        if (elapsed > 2000) {
+          message += ` Thời gian: ${formatElapsed(elapsed)}.`;
+        }
+        return message;
+      };
+
+      const progressTimer = setInterval(() => {
+        if (Date.now() - startedAt > 2000) {
+          setStatus(buildProgressMessage(), 'info');
+        }
+      }, 1000);
+
+      try {
+        for (const entry of unitPlans) {
+          try {
+            if (entry.action === 'skip') {
+              if (supportComments && entry.comment) {
+                entry.range.insertComment(entry.comment);
+                await context.sync();
+              }
+            } else if (entry.action === 'convert') {
+              const replaced = entry.range.insertText(entry.afterText, Word.InsertLocation.replace);
+              if (setTimes) {
+                replaced.font.name = 'Times New Roman';
+                fontApplied += 1;
+              }
+              await context.sync();
+              convertApplied += 1;
+            } else if (setTimes) {
+              entry.range.font.name = 'Times New Roman';
+              await context.sync();
               fontApplied += 1;
             }
-            await context.sync();
-            convertApplied += 1;
-            continue;
+          } catch (_error) {
+            runtimeErrors += 1;
+          } finally {
+            processedBlocks += 1;
           }
-
-          if (setTimes) {
-            entry.range.font.name = 'Times New Roman';
-            await context.sync();
-            fontApplied += 1;
-          }
-        } catch (_error) {
-          runtimeErrors += 1;
         }
+      } finally {
+        clearInterval(progressTimer);
       }
 
       state.lastPreview = mergedPlan;
       renderChangePlan(mergedPlan);
 
       const summary = mergedPlan.summary;
+      const elapsed = Date.now() - startedAt;
       let message = `Đã xử lý theo từng block: convert ${convertApplied}/${summary.convertedCount}, skip ${summary.skippedCount}.`;
       if (setTimes) {
         message += ` Đặt Times New Roman cho ${fontApplied} block không bị skip.`;
+      }
+      if (elapsed > 2000) {
+        message += ` Thời gian: ${formatElapsed(elapsed)}.`;
       }
       if (runtimeErrors > 0) {
         message += ` Có ${runtimeErrors} block lỗi khi apply.`;
