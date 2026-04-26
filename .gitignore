@@ -1,8 +1,21 @@
-node_modules/
-dist/
-.vscode/
-*.log
-scratch
-uvconv
-venv
-~$*
+# Ignore everything by default.
+/*
+
+# Keep core tracked project files/folders.
+!/.gitignore
+!/README.md
+!/package.json
+!/package-lock.json
+!/manifest.xml
+!/manifest.local.xml
+!/.github/
+!/.github/**
+!/assets/
+!/assets/**
+!/scripts/
+!/scripts/**
+!/src/
+!/src/**
+
+# Ignore local/dev/generated files.
+src/taskpane/taskpane_table_split.js
