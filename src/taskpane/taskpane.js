@@ -17,12 +17,14 @@ const statusEl = document.getElementById('status');
 const metaEl = document.getElementById('meta');
 const beforeEl = document.getElementById('before-text');
 const afterEl = document.getElementById('after-text');
+const versionTagEl = document.querySelector('.version-tag');
 
 const state = {
   ready: false,
   lastPreview: null,
 };
 
+const ADD_IN_VERSION = '3.1.1';
 const TEXT_RANGE_DELIMITERS = Object.freeze(['\r', '\t', '\v', '\n', '\f']);
 const FONT_LOAD_PROPERTIES = Object.freeze(Array.from(new Set(Object.values(FORMAT_SNAPSHOT_MAP))));
 const READ_UNIT_BATCH_SIZE = 1000;
@@ -62,6 +64,7 @@ function recordTelemetry(action, payload = {}) {
 
   const record = {
     action,
+    addInVersion: ADD_IN_VERSION,
     timestamp: new Date().toISOString(),
     ...payload,
   };
@@ -129,6 +132,12 @@ function setControlsBusy(isBusy) {
   const disabled = Boolean(isBusy);
   previewBtn.disabled = disabled;
   applyBtn.disabled = disabled;
+}
+
+function renderVersion() {
+  if (versionTagEl) {
+    versionTagEl.textContent = `Version ${ADD_IN_VERSION}`;
+  }
 }
 
 function getSourceMode() {
@@ -411,7 +420,9 @@ async function previewSelection() {
         return;
       }
 
+      const planStartedAt = Date.now();
       const { mergedPlan } = buildSelectionResult(selection, getSourceMode(), shouldAllowMixedFormat());
+      const planMs = Date.now() - planStartedAt;
       state.lastPreview = mergedPlan;
       renderChangePlan(mergedPlan);
       if (telemetry) {
@@ -419,6 +430,9 @@ async function previewSelection() {
           result: 'ok',
           options: telemetry.options,
           ...buildPlanTelemetry(selection, mergedPlan),
+          planStats: {
+            planMs,
+          },
         };
       }
 
@@ -477,23 +491,26 @@ async function applySelection() {
         return;
       }
 
+      const planStartedAt = Date.now();
       const { unitPlans, mergedPlan } = buildSelectionResult(selection, getSourceMode(), shouldAllowMixedFormat());
+      const planMs = Date.now() - planStartedAt;
 
       const setTimes = shouldSetTimesNewRoman();
       const supportComments = canInsertWordComments();
       const totalBlocks = unitPlans.length;
-      const startedAt = Date.now();
+      const writeStartedAt = Date.now();
       let processedBlocks = 0;
       let convertApplied = 0;
       let fontApplied = 0;
       let runtimeErrors = 0;
+      let writeSyncCount = 0;
 
       const progressPercent = totalBlocks > 0 ? 0 : 100;
       setStatus(`Đang áp dụng chuyển mã... 0/${totalBlocks} block (${progressPercent}%).`, 'info');
 
       const buildProgressMessage = () => {
         const percent = totalBlocks > 0 ? Math.round((processedBlocks * 100) / totalBlocks) : 100;
-        const elapsed = Date.now() - startedAt;
+        const elapsed = Date.now() - writeStartedAt;
         let message = `Đang áp dụng chuyển mã... ${processedBlocks}/${totalBlocks} block (${percent}%).`;
         if (elapsed > 2000) {
           message += ` Thời gian: ${formatElapsed(elapsed)}.`;
@@ -502,7 +519,7 @@ async function applySelection() {
       };
 
       const progressTimer = setInterval(() => {
-        if (Date.now() - startedAt > 2000) {
+        if (Date.now() - writeStartedAt > 2000) {
           setStatus(buildProgressMessage(), 'info');
         }
       }, 1000);
@@ -514,6 +531,7 @@ async function applySelection() {
               if (supportComments && entry.comment) {
                 entry.range.insertComment(entry.comment);
                 await context.sync();
+                writeSyncCount += 1;
               }
             } else if (entry.action === 'convert') {
               const replaced = entry.range.insertText(entry.afterText, Word.InsertLocation.replace);
@@ -522,10 +540,12 @@ async function applySelection() {
                 fontApplied += 1;
               }
               await context.sync();
+              writeSyncCount += 1;
               convertApplied += 1;
             } else if (setTimes) {
               entry.range.font.name = 'Times New Roman';
               await context.sync();
+              writeSyncCount += 1;
               fontApplied += 1;
             }
           } catch (_error) {
@@ -542,14 +562,18 @@ async function applySelection() {
       renderChangePlan(mergedPlan);
 
       const summary = mergedPlan.summary;
-      const elapsed = Date.now() - startedAt;
+      const writeMs = Date.now() - writeStartedAt;
       if (telemetry) {
         telemetryPayload = {
           result: runtimeErrors > 0 ? 'partial-error' : 'ok',
           options: telemetry.options,
           ...buildPlanTelemetry(selection, mergedPlan),
+          planStats: {
+            planMs,
+          },
           applyStats: {
-            applyMs: elapsed,
+            writeMs,
+            writeSyncCount,
             totalBlocks,
             processedBlocks,
             convertApplied,
@@ -563,8 +587,8 @@ async function applySelection() {
       if (setTimes) {
         message += ` Đặt Times New Roman cho ${fontApplied} block không bị skip.`;
       }
-      if (elapsed > 2000) {
-        message += ` Thời gian: ${formatElapsed(elapsed)}.`;
+      if (writeMs > 2000) {
+        message += ` Thời gian: ${formatElapsed(writeMs)}.`;
       }
       if (runtimeErrors > 0) {
         message += ` Có ${runtimeErrors} block lỗi khi apply.`;
@@ -613,6 +637,7 @@ function wireEvents() {
 
 Office.onReady((info) => {
   exposeTelemetryControls();
+  renderVersion();
 
   if (info.host !== Office.HostType.Word) {
     setStatus('Add-in này chỉ chạy trong Microsoft Word.', 'error');
