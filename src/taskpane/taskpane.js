@@ -25,6 +25,7 @@ const state = {
 
 const TEXT_RANGE_DELIMITERS = Object.freeze(['\r', '\t', '\v', '\n', '\f']);
 const FONT_LOAD_PROPERTIES = Object.freeze(Array.from(new Set(Object.values(FORMAT_SNAPSHOT_MAP))));
+const READ_UNIT_BATCH_SIZE = 1000;
 const TELEMETRY_ENABLED_KEY = 'vieTelemetryEnabled';
 const TELEMETRY_HISTORY_KEY = 'vieTelemetryHistory';
 const TELEMETRY_HISTORY_LIMIT = 30;
@@ -230,6 +231,8 @@ function createSelectionReadStats() {
     unitCountBeforeFilter: 0,
     unitCountAfterFilter: 0,
     finalUnitCount: 0,
+    readBatchSize: READ_UNIT_BATCH_SIZE,
+    readBatchCount: 0,
     fallbackReason: null,
     readMs: 0,
   };
@@ -256,22 +259,35 @@ async function readSelectionTextRanges(context, range, stats) {
 }
 
 async function readTextRangeUnits(context, textRanges, stats) {
-  for (const item of textRanges.items) {
-    item.load('text');
-    loadFontForSnapshot(item.font);
-  }
-
-  await syncSelectionRead(context, stats);
   stats.unitCountBeforeFilter = textRanges.items.length;
+  stats.readBatchCount = Math.ceil(textRanges.items.length / READ_UNIT_BATCH_SIZE);
 
-  const units = textRanges.items
-    .map((item, index) => ({
-      id: `unit-${index + 1}`,
-      range: item,
-      text: sanitizeUnitText(item.text || ''),
-      format: toFormatSnapshot(item.font),
-    }))
-    .filter((item) => item.text.length > 0);
+  const units = [];
+  for (let start = 0; start < textRanges.items.length; start += READ_UNIT_BATCH_SIZE) {
+    const batch = textRanges.items.slice(start, start + READ_UNIT_BATCH_SIZE);
+
+    for (const item of batch) {
+      item.load('text');
+      loadFontForSnapshot(item.font);
+    }
+
+    await syncSelectionRead(context, stats);
+
+    for (let batchIndex = 0; batchIndex < batch.length; batchIndex += 1) {
+      const item = batch[batchIndex];
+      const text = sanitizeUnitText(item.text || '');
+      if (!text) {
+        continue;
+      }
+
+      units.push({
+        id: `unit-${start + batchIndex + 1}`,
+        range: item,
+        text,
+        format: toFormatSnapshot(item.font),
+      });
+    }
+  }
 
   stats.unitCountAfterFilter = units.length;
   return units;
