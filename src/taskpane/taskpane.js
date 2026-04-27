@@ -1,6 +1,7 @@
 ﻿import {
   buildUnitChangePlans,
   createFormatSnapshotFromRaw,
+  FORMAT_SNAPSHOT_MAP,
   mergeUnitChangePlans,
   normalizeTextWithoutSplitChars,
   sanitizeUnitText,
@@ -22,6 +23,9 @@ const state = {
   lastPreview: null,
 };
 
+const TEXT_RANGE_DELIMITERS = Object.freeze(['\r', '\t', '\v', '\n', '\f']);
+const FONT_LOAD_PROPERTIES = Object.freeze(Array.from(new Set(Object.values(FORMAT_SNAPSHOT_MAP))));
+
 function setStatus(message, level = 'info') {
   statusEl.textContent = message;
   statusEl.classList.remove('ok', 'warn', 'error');
@@ -30,8 +34,10 @@ function setStatus(message, level = 'info') {
   }
 }
 
-function setApplyEnabled(_enabled) {
-  applyBtn.disabled = false;
+function setControlsBusy(isBusy) {
+  const disabled = Boolean(isBusy);
+  previewBtn.disabled = disabled;
+  applyBtn.disabled = disabled;
 }
 
 function getSourceMode() {
@@ -75,6 +81,12 @@ function toFormatSnapshot(font) {
   return createFormatSnapshotFromRaw(raw);
 }
 
+function loadFontForSnapshot(font) {
+  if (font && typeof font.load === 'function') {
+    font.load(FONT_LOAD_PROPERTIES);
+  }
+}
+
 function renderChangePlan(changePlan) {
   beforeEl.textContent = changePlan.inputText || '';
   afterEl.textContent = changePlan.outputText || '';
@@ -87,7 +99,6 @@ function renderChangePlan(changePlan) {
       `Không có thay đổi | block: ${summary.totalBlocks} | convert: ${summary.convertedCount} | skip: ${summary.skippedCount}` +
       ` | vni: ${summary.vni} | tcvn3: ${summary.tcvn3} | unicode/unknown: ${summary.unicodeOrUnknown}` +
       `${skipComment}`;
-    setApplyEnabled(false);
     return;
   }
 
@@ -95,7 +106,6 @@ function renderChangePlan(changePlan) {
     `Block: ${summary.totalBlocks} | convert: ${summary.convertedCount} | skip: ${summary.skippedCount} | giữ nguyên: ${summary.noopCount}` +
     ` | vni: ${summary.vni} | tcvn3: ${summary.tcvn3} | unicode/unknown: ${summary.unicodeOrUnknown}` +
     `${skipComment}`;
-  setApplyEnabled(true);
 }
 
 function buildSelectionResult(selection, sourceMode, allowMixedFormat) {
@@ -104,66 +114,131 @@ function buildSelectionResult(selection, sourceMode, allowMixedFormat) {
   return { unitPlans, mergedPlan };
 }
 
-async function getSelectionData(context) {
+function createSelectionReadStats() {
+  return {
+    syncCount: 0,
+    rangeCount: 0,
+    unitCountBeforeFilter: 0,
+    unitCountAfterFilter: 0,
+    finalUnitCount: 0,
+    fallbackReason: null,
+    readMs: 0,
+  };
+}
+
+async function syncSelectionRead(context, stats) {
+  await context.sync();
+  stats.syncCount += 1;
+}
+
+async function readSelectionBase(context, stats) {
   const range = context.document.getSelection();
   range.load('text,isEmpty');
-  await context.sync();
+  await syncSelectionRead(context, stats);
+  return range;
+}
 
-  if (range.isEmpty) {
-    return {
-      range,
-      text: '',
-      isEmpty: true,
-      units: [],
-    };
+async function readSelectionTextRanges(context, range, stats) {
+  const textRanges = range.getTextRanges(TEXT_RANGE_DELIMITERS, false);
+  textRanges.load('items');
+  await syncSelectionRead(context, stats);
+  stats.rangeCount = textRanges.items.length;
+  return textRanges;
+}
+
+async function readTextRangeUnits(context, textRanges, stats) {
+  for (const item of textRanges.items) {
+    item.load('text');
+    loadFontForSnapshot(item.font);
   }
 
-  const textRanges = range.getTextRanges(['\r', '\t', '\v', '\n', '\f'], false);
-  textRanges.load('items');
-  await context.sync();
+  await syncSelectionRead(context, stats);
+  stats.unitCountBeforeFilter = textRanges.items.length;
 
-  let units = [];
-  if (textRanges.items.length) {
-    for (const item of textRanges.items) {
-      item.load('text');
-      item.font.load();
-    }
-    await context.sync();
-
-    units = textRanges.items.map((item, index) => ({
+  const units = textRanges.items
+    .map((item, index) => ({
       id: `unit-${index + 1}`,
       range: item,
       text: sanitizeUnitText(item.text || ''),
       format: toFormatSnapshot(item.font),
-    }));
-    units = units.filter((item) => item.text.length > 0);
+    }))
+    .filter((item) => item.text.length > 0);
 
-    const selectedNormalized = normalizeTextWithoutSplitChars(sanitizeUnitText(range.text || ''));
-    const unitsNormalized = normalizeTextWithoutSplitChars(units.map((item) => item.text || '').join(''));
+  stats.unitCountAfterFilter = units.length;
+  return units;
+}
 
-    if (!selectedNormalized || selectedNormalized !== unitsNormalized) {
-      range.font.load();
-      await context.sync();
-      units = [
-        {
-          id: 'unit-1',
-          range,
-          text: sanitizeUnitText(range.text || ''),
-          format: toFormatSnapshot(range.font),
-        },
-      ];
+async function readRangeFallbackUnit(context, range, stats, fallbackReason) {
+  stats.fallbackReason = fallbackReason;
+  loadFontForSnapshot(range.font);
+  await syncSelectionRead(context, stats);
+
+  const units = [
+    {
+      id: 'unit-1',
+      range,
+      text: sanitizeUnitText(range.text || ''),
+      format: toFormatSnapshot(range.font),
+    },
+  ];
+
+  if (!stats.unitCountBeforeFilter) {
+    stats.unitCountBeforeFilter = 1;
+    stats.unitCountAfterFilter = units.length;
+  }
+
+  return units;
+}
+
+function getRangeFallbackReason(range, units) {
+  const selectedNormalized = normalizeTextWithoutSplitChars(sanitizeUnitText(range.text || ''));
+  const unitsNormalized = normalizeTextWithoutSplitChars(units.map((item) => item.text || '').join(''));
+
+  if (!selectedNormalized) {
+    return 'empty-normalized-selection';
+  }
+
+  if (selectedNormalized !== unitsNormalized) {
+    return 'text-range-mismatch';
+  }
+
+  return null;
+}
+
+function finalizeSelectionReadStats(stats, startedAt, units) {
+  stats.finalUnitCount = units.length;
+  stats.readMs = Date.now() - startedAt;
+  return stats;
+}
+
+async function getSelectionData(context) {
+  const startedAt = Date.now();
+  const readStats = createSelectionReadStats();
+  const range = await readSelectionBase(context, readStats);
+
+  if (range.isEmpty) {
+    const units = [];
+    return {
+      range,
+      text: '',
+      isEmpty: true,
+      units,
+      readStats: finalizeSelectionReadStats(readStats, startedAt, units),
+    };
+  }
+
+  const textRanges = await readSelectionTextRanges(context, range, readStats);
+
+  let units = [];
+  if (textRanges.items.length) {
+    units = await readTextRangeUnits(context, textRanges, readStats);
+
+    const fallbackReason = getRangeFallbackReason(range, units);
+    if (fallbackReason) {
+      units = await readRangeFallbackUnit(context, range, readStats, fallbackReason);
     }
   } else {
-    range.font.load();
-    await context.sync();
-    units = [
-      {
-        id: 'unit-1',
-        range,
-        text: sanitizeUnitText(range.text || ''),
-        format: toFormatSnapshot(range.font),
-      },
-    ];
+    units = await readRangeFallbackUnit(context, range, readStats, 'no-text-ranges');
   }
 
   return {
@@ -171,6 +246,7 @@ async function getSelectionData(context) {
     text: range.text || '',
     isEmpty: false,
     units,
+    readStats: finalizeSelectionReadStats(readStats, startedAt, units),
   };
 }
 
@@ -186,7 +262,7 @@ async function previewSelection() {
   }
 
   setStatus('Đang tạo preview...', 'info');
-  setApplyEnabled(false);
+  setControlsBusy(true);
 
   try {
     await Word.run(async (context) => {
@@ -214,6 +290,8 @@ async function previewSelection() {
     });
   } catch (error) {
     setStatus(`Không tạo được preview: ${error?.message || String(error)}`, 'error');
+  } finally {
+    setControlsBusy(false);
   }
 }
 
@@ -229,6 +307,7 @@ async function applySelection() {
   }
 
   setStatus('Đang phân tích vùng chọn...', 'info');
+  setControlsBusy(true);
 
   try {
     await Word.run(async (context) => {
@@ -320,6 +399,8 @@ async function applySelection() {
     });
   } catch (error) {
     setStatus(`Không áp dụng được chuyển mã: ${error?.message || String(error)}`, 'error');
+  } finally {
+    setControlsBusy(false);
   }
 }
 
@@ -354,6 +435,6 @@ Office.onReady((info) => {
 
   state.ready = true;
   wireEvents();
-  setApplyEnabled(true);
+  setControlsBusy(false);
   setStatus('Sẵn sàng. Hãy chọn đoạn văn bản rồi bấm Preview.', 'ok');
 });

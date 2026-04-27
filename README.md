@@ -91,3 +91,6 @@ Các bước:
 - `scripts/start-desktop.js`: sideload local manifest + mở Word
 - `.github/workflows/deploy-pages.yml`: deploy GitHub Pages
 
+## Tài liệu kiến trúc
+
+- `architecture_flow.md`: sơ đồ khối tổng thể, sơ đồ runtime, và sequence diagram chi tiết của add-in
