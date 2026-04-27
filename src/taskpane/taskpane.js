@@ -25,6 +25,96 @@ const state = {
 
 const TEXT_RANGE_DELIMITERS = Object.freeze(['\r', '\t', '\v', '\n', '\f']);
 const FONT_LOAD_PROPERTIES = Object.freeze(Array.from(new Set(Object.values(FORMAT_SNAPSHOT_MAP))));
+const TELEMETRY_ENABLED_KEY = 'vieTelemetryEnabled';
+const TELEMETRY_HISTORY_KEY = 'vieTelemetryHistory';
+const TELEMETRY_HISTORY_LIMIT = 30;
+
+function readJsonArrayFromLocalStorage(key) {
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function isTelemetryEnabled() {
+  try {
+    return window.localStorage.getItem(TELEMETRY_ENABLED_KEY) === '1';
+  } catch (_error) {
+    return false;
+  }
+}
+
+function storeTelemetryRecord(record) {
+  const history = readJsonArrayFromLocalStorage(TELEMETRY_HISTORY_KEY);
+  history.push(record);
+  const compactHistory = history.slice(-TELEMETRY_HISTORY_LIMIT);
+  window.localStorage.setItem(TELEMETRY_HISTORY_KEY, JSON.stringify(compactHistory));
+}
+
+function recordTelemetry(action, payload = {}) {
+  if (!isTelemetryEnabled()) {
+    return;
+  }
+
+  const record = {
+    action,
+    timestamp: new Date().toISOString(),
+    ...payload,
+  };
+
+  try {
+    storeTelemetryRecord(record);
+  } catch (_error) {
+    // Console logging is still useful even if localStorage quota is unavailable.
+  }
+
+  console.info('[VIE telemetry]', record);
+}
+
+function startTelemetryOperation() {
+  if (!isTelemetryEnabled()) {
+    return null;
+  }
+
+  return {
+    startedAt: Date.now(),
+    options: getTelemetryOptions(),
+  };
+}
+
+function finishTelemetryOperation(action, operation, payload = {}) {
+  if (!operation) {
+    return;
+  }
+
+  recordTelemetry(action, {
+    durationMs: Date.now() - operation.startedAt,
+    ...payload,
+  });
+}
+
+function exposeTelemetryControls() {
+  window.VIE_TELEMETRY = {
+    enable() {
+      window.localStorage.setItem(TELEMETRY_ENABLED_KEY, '1');
+      console.info('[VIE telemetry] enabled');
+    },
+    disable() {
+      window.localStorage.removeItem(TELEMETRY_ENABLED_KEY);
+      console.info('[VIE telemetry] disabled');
+    },
+    history() {
+      return readJsonArrayFromLocalStorage(TELEMETRY_HISTORY_KEY);
+    },
+    clear() {
+      window.localStorage.removeItem(TELEMETRY_HISTORY_KEY);
+      console.info('[VIE telemetry] history cleared');
+    },
+  };
+}
 
 function setStatus(message, level = 'info') {
   statusEl.textContent = message;
@@ -112,6 +202,25 @@ function buildSelectionResult(selection, sourceMode, allowMixedFormat) {
   const unitPlans = buildUnitChangePlans(selection.units, { sourceMode, allowMixedFormat });
   const mergedPlan = mergeUnitChangePlans(unitPlans, selection.text);
   return { unitPlans, mergedPlan };
+}
+
+function getTelemetryOptions() {
+  return {
+    sourceMode: getSourceMode(),
+    setTimesNewRoman: shouldSetTimesNewRoman(),
+    allowMixedFormat: shouldAllowMixedFormat(),
+    scopeMode: getScopeMode(),
+  };
+}
+
+function buildPlanTelemetry(selection, mergedPlan) {
+  const summary = mergedPlan && mergedPlan.summary ? mergedPlan.summary : null;
+  return {
+    readStats: selection ? selection.readStats : null,
+    summary,
+    changed: Boolean(mergedPlan && mergedPlan.changed),
+    commentCount: mergedPlan && mergedPlan.comments ? mergedPlan.comments.length : 0,
+  };
 }
 
 function createSelectionReadStats() {
@@ -264,6 +373,9 @@ async function previewSelection() {
   setStatus('Đang tạo preview...', 'info');
   setControlsBusy(true);
 
+  const telemetry = startTelemetryOperation();
+  let telemetryPayload = null;
+
   try {
     await Word.run(async (context) => {
       const selection = await getSelectionData(context);
@@ -273,12 +385,26 @@ async function previewSelection() {
         afterEl.textContent = '';
         metaEl.textContent = 'Vùng chọn rỗng. Hãy bôi đen đoạn cần xử lý.';
         setStatus('Không có vùng chọn. Hãy bôi đen text trước khi Preview.', 'warn');
+        if (telemetry) {
+          telemetryPayload = {
+            result: 'empty-selection',
+            options: telemetry.options,
+            readStats: selection.readStats,
+          };
+        }
         return;
       }
 
       const { mergedPlan } = buildSelectionResult(selection, getSourceMode(), shouldAllowMixedFormat());
       state.lastPreview = mergedPlan;
       renderChangePlan(mergedPlan);
+      if (telemetry) {
+        telemetryPayload = {
+          result: 'ok',
+          options: telemetry.options,
+          ...buildPlanTelemetry(selection, mergedPlan),
+        };
+      }
 
       if (mergedPlan.changed) {
         setStatus(`Preview sẵn sàng. Convert: ${mergedPlan.summary.convertedCount}, skip: ${mergedPlan.summary.skippedCount}.`, 'ok');
@@ -289,8 +415,16 @@ async function previewSelection() {
       }
     });
   } catch (error) {
+    if (telemetry) {
+      telemetryPayload = {
+        result: 'error',
+        options: telemetry.options,
+        error: error?.message || String(error),
+      };
+    }
     setStatus(`Không tạo được preview: ${error?.message || String(error)}`, 'error');
   } finally {
+    finishTelemetryOperation('preview', telemetry, telemetryPayload);
     setControlsBusy(false);
   }
 }
@@ -309,11 +443,21 @@ async function applySelection() {
   setStatus('Đang phân tích vùng chọn...', 'info');
   setControlsBusy(true);
 
+  const telemetry = startTelemetryOperation();
+  let telemetryPayload = null;
+
   try {
     await Word.run(async (context) => {
       const selection = await getSelectionData(context);
       if (selection.isEmpty) {
         setStatus('Không có vùng chọn để Apply. Hãy bôi đen text trước.', 'warn');
+        if (telemetry) {
+          telemetryPayload = {
+            result: 'empty-selection',
+            options: telemetry.options,
+            readStats: selection.readStats,
+          };
+        }
         return;
       }
 
@@ -383,6 +527,22 @@ async function applySelection() {
 
       const summary = mergedPlan.summary;
       const elapsed = Date.now() - startedAt;
+      if (telemetry) {
+        telemetryPayload = {
+          result: runtimeErrors > 0 ? 'partial-error' : 'ok',
+          options: telemetry.options,
+          ...buildPlanTelemetry(selection, mergedPlan),
+          applyStats: {
+            applyMs: elapsed,
+            totalBlocks,
+            processedBlocks,
+            convertApplied,
+            fontApplied,
+            runtimeErrors,
+            supportComments,
+          },
+        };
+      }
       let message = `Đã xử lý theo từng block: convert ${convertApplied}/${summary.convertedCount}, skip ${summary.skippedCount}.`;
       if (setTimes) {
         message += ` Đặt Times New Roman cho ${fontApplied} block không bị skip.`;
@@ -398,8 +558,16 @@ async function applySelection() {
       }
     });
   } catch (error) {
+    if (telemetry) {
+      telemetryPayload = {
+        result: 'error',
+        options: telemetry.options,
+        error: error?.message || String(error),
+      };
+    }
     setStatus(`Không áp dụng được chuyển mã: ${error?.message || String(error)}`, 'error');
   } finally {
+    finishTelemetryOperation('apply', telemetry, telemetryPayload);
     setControlsBusy(false);
   }
 }
@@ -428,6 +596,8 @@ function wireEvents() {
 }
 
 Office.onReady((info) => {
+  exposeTelemetryControls();
+
   if (info.host !== Office.HostType.Word) {
     setStatus('Add-in này chỉ chạy trong Microsoft Word.', 'error');
     return;
