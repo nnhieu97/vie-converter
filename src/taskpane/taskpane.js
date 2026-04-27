@@ -17,12 +17,14 @@ const statusEl = document.getElementById('status');
 const metaEl = document.getElementById('meta');
 const beforeEl = document.getElementById('before-text');
 const afterEl = document.getElementById('after-text');
+const versionTagEl = document.querySelector('.version-tag');
 
 const state = {
   ready: false,
   lastPreview: null,
 };
 
+const ADD_IN_VERSION = '3.1.1';
 const TEXT_RANGE_DELIMITERS = Object.freeze(['\r', '\t', '\v', '\n', '\f']);
 const FONT_LOAD_PROPERTIES = Object.freeze(Array.from(new Set(Object.values(FORMAT_SNAPSHOT_MAP))));
 const READ_UNIT_BATCH_SIZE = 1000;
@@ -62,6 +64,7 @@ function recordTelemetry(action, payload = {}) {
 
   const record = {
     action,
+    addInVersion: ADD_IN_VERSION,
     timestamp: new Date().toISOString(),
     ...payload,
   };
@@ -129,6 +132,12 @@ function setControlsBusy(isBusy) {
   const disabled = Boolean(isBusy);
   previewBtn.disabled = disabled;
   applyBtn.disabled = disabled;
+}
+
+function renderVersion() {
+  if (versionTagEl) {
+    versionTagEl.textContent = `Version ${ADD_IN_VERSION}`;
+  }
 }
 
 function getSourceMode() {
@@ -613,6 +622,7 @@ function wireEvents() {
 
 Office.onReady((info) => {
   exposeTelemetryControls();
+  renderVersion();
 
   if (info.host !== Office.HostType.Word) {
     setStatus('Add-in này chỉ chạy trong Microsoft Word.', 'error');
